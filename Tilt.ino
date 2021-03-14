@@ -4,7 +4,20 @@
 #include "math.h" //for trig functions
 #include "tinyexpr.h" //nifty little library for applying curve fit algorithm
 
-#define TILT_DEBUG //enable for sprint messages
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+const char* ssid     = "xxxxxx";
+const char* password = "xxxxxx";
+const char* mqtt_server = "xxxxxx";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+unsigned long lastMsg = 0;
+#define MSG_BUFFER_SIZE	(50)
+char msg[MSG_BUFFER_SIZE];
+int value = 0;
+
+//#define TILT_DEBUG //enable for sprint messages
 
 #define MEDIANROUNDSMAX 49
 #define MEDIANROUNDSMIN 29
@@ -39,7 +52,79 @@ void setup() {
   accelgyro.setXGyroOffset (-5);
   accelgyro.setYGyroOffset (18);
   accelgyro.setZGyroOffset (-21);
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
 }
+
+void setup_wifi() {
+
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  randomSeed(micros());
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {  
+
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  payload[length] = '\0'; //terminate the byte buffer so we can cast it as a string and copy it.
+ 
+  //TODO - rationalize new polynomial, else restore the old one.
+  strcpy(my_polynominal,(char *)payload);
+
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "ESP";
+    //clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("Data", "HIHI");
+      // ... and resubscribe
+      client.subscribe("Polynomial");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+
 
 float getTemperature()
 {
@@ -125,5 +210,27 @@ void loop() {
     Serial.println(Temperature);
   #endif
 
-  delay(1000);
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  unsigned long now = millis();
+
+  if (now - lastMsg > 2000) {
+    lastMsg = now;
+    ++value;
+    dtostrf(value,0,0,msg);
+    client.publish("Tick", msg);
+    
+    dtostrf(Gravity,0,2,msg);
+    client.publish("Gravity", msg);
+    
+    dtostrf(Temperature,0,2,msg);
+    client.publish("Temperature", msg);
+
+    client.publish("Poly",my_polynominal);
+
+  }
+
 }
